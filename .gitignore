@@ -1,0 +1,38 @@
+# 环境变量（敏感信息）
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+env/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.history/
+.specstory/
+.cursor/
+
+# 测试
+test_temp/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 日志
+*.log
+logs/
+app.log
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
