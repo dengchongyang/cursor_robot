@@ -8,6 +8,8 @@ from loguru import logger
 
 from config import settings
 from feishu import FeishuClient
+from knowledge import knowledge_retriever
+from runtime_memory import memory_store
 
 
 def setup_logging():
@@ -23,6 +25,9 @@ def setup_logging():
 def main():
     """主函数"""
     setup_logging()
+    memory_store.init_db()
+    memory_store.sync_memories_to_markdown()
+    knowledge_retriever.sync()
 
     logger.info("=" * 50)
     logger.info("飞书机器人 + Cursor Agent 桥接服务")

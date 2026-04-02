@@ -153,6 +153,11 @@ def _parse_message(item: dict, token: str) -> tuple[dict | None, list[dict]]:
         
         create_time = item.get("create_time", "")
         time_str = time.strftime("%H:%M:%S", time.localtime(int(create_time) / 1000)) if create_time else "unknown"
+        created_at = (
+            time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(int(create_time) / 1000))
+            if create_time
+            else ""
+        )
         
         # 获取发送者名字
         if sender_type == "app":
@@ -213,7 +218,13 @@ def _parse_message(item: dict, token: str) -> tuple[dict | None, list[dict]]:
                 quote_preview = quoted_text[:50] + "..." if len(quoted_text) > 50 else quoted_text
                 text_content = f"[回复: {quote_preview}] {text_content}"
             
-            return {"time": time_str, "sender": sender_name, "content": text_content}, images
+            return {
+                "message_id": message_id,
+                "time": time_str,
+                "sender": sender_name,
+                "content": text_content,
+                "created_at": created_at,
+            }, images
         return None, images
 
     except Exception as e:

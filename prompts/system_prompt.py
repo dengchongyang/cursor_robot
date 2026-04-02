@@ -58,6 +58,26 @@ SYSTEM_PROMPT_TEMPLATE = '''
 
 ---
 
+# 持久化记忆摘要
+{persistent_memory}
+
+---
+
+# 长期记忆
+{long_term_memories}
+
+---
+
+# 近期操作记录
+{recent_operations}
+
+---
+
+# 检索到的相关文档片段
+{retrieved_docs}
+
+---
+
 # 聊天窗口的对话历史（最近20条）
 {chat_history}
 
@@ -73,6 +93,10 @@ def build_prompt(
     chat_id: str,
     tenant_access_token: str,
     chat_history: str = "（无历史消息）",
+    persistent_memory: str = "（暂无持久化记忆）",
+    long_term_memories: str = "（暂无长期记忆）",
+    recent_operations: str = "（暂无近期操作记录）",
+    retrieved_docs: str = "（暂无相关文档片段）",
     sender_name: str = "未知用户",
     chat_type: str = "p2p",
 ) -> str:
@@ -84,6 +108,10 @@ def build_prompt(
         chat_id: 飞书会话 ID
         tenant_access_token: 飞书访问令牌
         chat_history: 聊天历史记录
+        persistent_memory: 持久化记忆摘要
+        long_term_memories: 长期记忆
+        recent_operations: 近期操作记录
+        retrieved_docs: 检索到的文档片段
         sender_name: 发送者姓名
         chat_type: 聊天类型，p2p(单聊) 或 group(群聊)
         
@@ -107,6 +135,10 @@ def build_prompt(
         chat_id=chat_id,
         tenant_access_token=tenant_access_token,
         chat_history=chat_history,
+        persistent_memory=persistent_memory,
+        long_term_memories=long_term_memories,
+        recent_operations=recent_operations,
+        retrieved_docs=retrieved_docs,
         sender_name=sender_name,
         chat_type_label=chat_type_label,
         timezone=settings.timezone,

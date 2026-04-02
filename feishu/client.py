@@ -3,11 +3,24 @@
 """
 
 import lark_oapi as lark
-from lark_oapi.api.im.v1 import P2ImMessageReceiveV1
 from loguru import logger
 
 from config import settings
 from feishu.handlers import create_message_handler
+
+
+def _ignore_p2p_chat_entered_event(data) -> None:
+    """忽略用户进入机器人单聊事件，避免未注册处理器报错。"""
+    event = getattr(data, "event", None)
+    open_id = getattr(event, "operator_id", None) if event else None
+    logger.debug(f"忽略事件 im.chat.access_event.bot_p2p_chat_entered_v1 | operator_id={open_id}")
+
+
+def _ignore_message_read_event(data) -> None:
+    """忽略消息已读事件，避免未注册处理器报错。"""
+    event = getattr(data, "event", None)
+    message_id = getattr(event, "message_id", None) if event else None
+    logger.debug(f"忽略事件 im.message.message_read_v1 | message_id={message_id}")
 
 
 class FeishuClient:
@@ -43,6 +56,8 @@ class FeishuClient:
         handler = (
             lark.EventDispatcherHandler.builder("", "")
             .register_p2_im_message_receive_v1(create_message_handler())
+            .register_p2_im_chat_access_event_bot_p2p_chat_entered_v1(_ignore_p2p_chat_entered_event)
+            .register_p2_im_message_message_read_v1(_ignore_message_read_event)
             .build()
         )
         return handler

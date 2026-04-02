@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     cursor_github_repo: str = ""  # 必填，GitHub 仓库地址
     cursor_github_ref: str = "main"
     cursor_model: str = "gemini-3-flash"  # Agent使用的模型
+    memory_db_path: str = "data/robot_memory.db"
 
     # 群聊消息模式：all=所有消息都转发 | mention_only=只有@机器人才转发
     group_chat_mode: str = "mention_only"

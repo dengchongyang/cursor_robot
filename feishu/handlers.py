@@ -18,7 +18,9 @@ from feishu.token import TokenManager
 from feishu.history import get_chat_history, format_history
 from feishu.user import get_user_name
 from cursor.agent import CursorAgent
+from knowledge import knowledge_retriever
 from prompts.system_prompt import build_prompt
+from runtime_memory import memory_store, reflect_and_store
 
 # chat_id -> agent_id 缓存，用于 followup
 _agent_cache: dict[str, str] = {}
@@ -141,10 +143,30 @@ def _do_process_message(message_id: str, chat_id: str, chat_type: str, sender_na
 
         # 获取聊天历史（最近20条，已包含当前消息）
         history, images = get_chat_history(chat_id, limit=20)
+        if history:
+            memory_store.save_messages(chat_id, chat_type, history)
+        else:
+            history = memory_store.get_recent_messages(chat_id, limit=20)
+            if history:
+                logger.info(f"聊天历史接口超时，已回退到本地持久化记忆 | chat_id={chat_id} | msgs={len(history)}")
+
         history_text = format_history(history)
 
         # 从历史消息中提取最后一条作为用户消息摘要
         user_message = history[-1]["content"] if history else "[无法获取消息内容]"
+        persistent_memory = memory_store.build_memory_digest(chat_id)
+        long_term_memories = memory_store.format_long_term_memories(chat_id, limit=6)
+        recent_operations = memory_store.format_recent_operations(chat_id, limit=5)
+        retrieval_query = "\n".join(filter(None, [user_message, history_text[-1200:]]))
+        retrieved_docs = knowledge_retriever.format_for_prompt(retrieval_query, limit=4)
+        memory_store.upsert_operation(
+            chat_id=chat_id,
+            message_id=message_id,
+            sender_name=sender_name,
+            user_message=user_message,
+            history_excerpt=history_text,
+            status="received",
+        )
 
         # 构建 prompt
         prompt = build_prompt(
@@ -152,6 +174,10 @@ def _do_process_message(message_id: str, chat_id: str, chat_type: str, sender_na
             chat_id=chat_id,
             tenant_access_token=token,
             chat_history=history_text,
+            persistent_memory=persistent_memory,
+            long_term_memories=long_term_memories,
+            recent_operations=recent_operations,
+            retrieved_docs=retrieved_docs,
             sender_name=sender_name,
             chat_type=chat_type,
         )
@@ -162,19 +188,65 @@ def _do_process_message(message_id: str, chat_id: str, chat_type: str, sender_na
 
         # 优先尝试 followup，失败则创建新 Agent
         result = None
+        result_mode = "create_task"
         if cached_agent_id:
             result = agent.send_followup(cached_agent_id, prompt, images=images or None)
+            result_mode = "followup"
         if not result:
             result = agent.create_task(prompt, images=images or None)
+            result_mode = "create_task"
 
         # 更新缓存
         if result:
-            _agent_cache[chat_id] = result.get("id") or cached_agent_id
+            resolved_agent_id = result.get("id") or cached_agent_id or ""
+            _agent_cache[chat_id] = resolved_agent_id
+            memory_store.complete_operation(
+                chat_id=chat_id,
+                message_id=message_id,
+                status="succeeded",
+                agent_id=resolved_agent_id,
+                result_summary=f"{result_mode} 成功，agent_id={resolved_agent_id or 'unknown'}",
+            )
+            reflect_and_store(
+                chat_id=chat_id,
+                message_id=message_id,
+                user_message=user_message,
+                status="succeeded",
+                result_summary=f"{result_mode} 成功，agent_id={resolved_agent_id or 'unknown'}",
+            )
             logger.info(f"Agent 任务成功 | msg_id={message_id} | agent_id={_agent_cache[chat_id]}")
         else:
+            memory_store.complete_operation(
+                chat_id=chat_id,
+                message_id=message_id,
+                status="failed",
+                agent_id=cached_agent_id or "",
+                result_summary="创建或续接 Agent 失败",
+            )
+            reflect_and_store(
+                chat_id=chat_id,
+                message_id=message_id,
+                user_message=user_message,
+                status="failed",
+                result_summary="创建或续接 Agent 失败",
+            )
             logger.error(f"Agent 任务失败 | msg_id={message_id}")
             send_error_reply(chat_id, "抱歉，创建任务失败（网络错误），请稍后重试。")
 
     except Exception as e:
+        error_summary = f"异常: {str(e)[:120]}"
+        memory_store.complete_operation(
+            chat_id=chat_id,
+            message_id=message_id,
+            status="failed",
+            result_summary=error_summary,
+        )
+        reflect_and_store(
+            chat_id=chat_id,
+            message_id=message_id,
+            user_message=locals().get("user_message", ""),
+            status="failed",
+            result_summary=error_summary,
+        )
         logger.exception(f"异步处理消息失败 | msg_id={message_id} | error={e}")
         send_error_reply(chat_id, f"抱歉，处理请求时出现错误：{str(e)[:50]}")
