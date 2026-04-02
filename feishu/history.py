@@ -21,6 +21,9 @@ from feishu.message_parser import (
     parse_post,
     parse_file,
 )
+from network import get_feishu_client, request_with_retry
+
+_feishu_client = get_feishu_client()
 
 
 def get_message_by_id(message_id: str, token: str) -> str | None:
@@ -37,12 +40,14 @@ def get_message_by_id(message_id: str, token: str) -> str | None:
     url = f"https://open.feishu.cn/open-apis/im/v1/messages/{message_id}"
     
     try:
-        resp = httpx.get(
+        resp = request_with_retry(
+            _feishu_client,
+            "GET",
             url,
+            request_name="获取引用消息",
             headers={"Authorization": f"Bearer {token}"},
             timeout=5,
         )
-        resp.raise_for_status()
         data = resp.json()
         
         if data.get("code") != 0:
@@ -108,13 +113,15 @@ def get_chat_history(
     }
 
     try:
-        resp = httpx.get(
+        resp = request_with_retry(
+            _feishu_client,
+            "GET",
             url,
+            request_name="获取聊天历史",
             params=params,
             headers={"Authorization": f"Bearer {token}"},
             timeout=10,
         )
-        resp.raise_for_status()
         data = resp.json()
 
         if data.get("code") != 0:

@@ -7,6 +7,7 @@ import httpx
 from loguru import logger
 
 from config import settings
+from network import get_feishu_client, request_with_retry
 
 
 class TokenManager:
@@ -21,6 +22,7 @@ class TokenManager:
 
     # 飞书获取 token 的 API
     TOKEN_URL = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
+    _client = get_feishu_client()
 
     @classmethod
     def get_token(cls) -> str:
@@ -42,8 +44,11 @@ class TokenManager:
         logger.info("正在获取新的 tenant_access_token...")
         
         try:
-            resp = httpx.post(
+            resp = request_with_retry(
+                cls._client,
+                "POST",
                 cls.TOKEN_URL,
+                request_name="获取 tenant_access_token",
                 json={
                     "app_id": settings.feishu_app_id,
                     "app_secret": settings.feishu_app_secret,
@@ -51,7 +56,6 @@ class TokenManager:
                 headers={"Content-Type": "application/json"},
                 timeout=10,
             )
-            resp.raise_for_status()
             data = resp.json()
 
             if data.get("code") != 0:

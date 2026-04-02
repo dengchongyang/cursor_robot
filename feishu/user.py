@@ -7,9 +7,11 @@ from loguru import logger
 
 from feishu.token import TokenManager
 from config import settings
+from network import get_feishu_client, request_with_retry
 
 # 用户名缓存：open_id -> name
 _user_cache: dict[str, str] = {}
+_feishu_client = get_feishu_client()
 
 
 def get_user_name(open_id: str, allow_remote: bool = True) -> str:
@@ -34,13 +36,15 @@ def get_user_name(open_id: str, allow_remote: bool = True) -> str:
     token = TokenManager.get_token()
 
     try:
-        resp = httpx.get(
+        resp = request_with_retry(
+            _feishu_client,
+            "GET",
             url,
+            request_name="获取飞书用户名",
             params={"user_id_type": "open_id"},
             headers={"Authorization": f"Bearer {token}"},
             timeout=5,
         )
-        resp.raise_for_status()
         data = resp.json()
 
         if data.get("code") == 0:

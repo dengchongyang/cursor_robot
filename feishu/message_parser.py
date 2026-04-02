@@ -15,6 +15,10 @@ import io
 import httpx
 from loguru import logger
 
+from network import get_feishu_client, request_with_retry
+
+_feishu_client = get_feishu_client()
+
 
 def parse_text(content: str, mentions: list[dict] | None = None) -> str:
     """
@@ -219,13 +223,15 @@ def _download_file(message_id: str, file_key: str, token: str) -> bytes | None:
     """下载文件内容"""
     url = f"https://open.feishu.cn/open-apis/im/v1/messages/{message_id}/resources/{file_key}"
     try:
-        resp = httpx.get(
+        resp = request_with_retry(
+            _feishu_client,
+            "GET",
             url,
+            request_name="下载飞书文件",
             params={"type": "file"},
             headers={"Authorization": f"Bearer {token}"},
             timeout=30,
         )
-        resp.raise_for_status()
         return resp.content
     except Exception as e:
         logger.debug(f"下载文件失败: {e}")
@@ -236,13 +242,15 @@ def _download_image(message_id: str, image_key: str, token: str) -> dict | None:
     """下载图片并转为 base64"""
     url = f"https://open.feishu.cn/open-apis/im/v1/messages/{message_id}/resources/{image_key}"
     try:
-        resp = httpx.get(
+        resp = request_with_retry(
+            _feishu_client,
+            "GET",
             url,
+            request_name="下载飞书图片",
             params={"type": "image"},
             headers={"Authorization": f"Bearer {token}"},
             timeout=15,
         )
-        resp.raise_for_status()
         img_base64 = base64.b64encode(resp.content).decode("utf-8")
         return {
             "data": img_base64,

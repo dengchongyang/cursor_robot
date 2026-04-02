@@ -20,6 +20,7 @@ from feishu.token import TokenManager
 from feishu.history import get_chat_history, format_history
 from feishu.user import get_user_name
 from knowledge import knowledge_retriever
+from network import get_feishu_client, request_with_retry
 from prompts.system_prompt import build_prompt
 from runtime_memory import memory_store, reflect_and_store
 
@@ -29,6 +30,7 @@ _agent_cache: dict[str, str] = {}
 # chat_id -> Lock，确保同一会话的消息顺序处理
 _chat_locks: dict[str, threading.Lock] = {}
 _locks_lock = threading.Lock()  # 保护 _chat_locks 的锁
+_feishu_client = get_feishu_client()
 
 
 def _get_chat_lock(chat_id: str) -> threading.Lock:
@@ -54,8 +56,11 @@ def send_text_reply(chat_id: str, text: str):
             "msg_type": "text",
             "content": json.dumps({"text": text}),
         }
-        resp = httpx.post(
+        resp = request_with_retry(
+            _feishu_client,
+            "POST",
             url,
+            request_name="发送飞书文本回复",
             json=payload,
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
             timeout=10,

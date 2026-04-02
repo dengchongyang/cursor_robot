@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     notify_on_agent_timeout: bool = True
     history_resolve_remote_names: bool = False
     history_resolve_quotes: bool = False
+    http_retry_attempts: int = 3
+    http_retry_backoff_seconds: float = 1.0
+    cursor_status_timeout_seconds: int = 20
 
     # 群聊消息模式：all=所有消息都转发 | mention_only=只有@机器人才转发
     group_chat_mode: str = "mention_only"

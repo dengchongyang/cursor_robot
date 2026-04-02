@@ -12,6 +12,7 @@ import httpx
 from loguru import logger
 
 from config import settings
+from network import get_cursor_client, request_with_retry
 
 
 class CursorAgent:
@@ -29,6 +30,7 @@ class CursorAgent:
         self.api_key = settings.cursor_api_key
         self.repo = settings.cursor_github_repo
         self.ref = settings.cursor_github_ref
+        self.client = get_cursor_client()
 
     def _get_auth(self) -> tuple[str, str]:
         """
@@ -73,14 +75,16 @@ class CursorAgent:
         try:
             logger.debug(f"创建 Agent 任务 | repo={self.repo} | ref={self.ref}")
 
-            resp = httpx.post(
+            resp = request_with_retry(
+                self.client,
+                "POST",
                 url,
+                request_name="创建 Agent 任务",
                 json=payload,
                 auth=self._get_auth(),
                 headers={"Content-Type": "application/json"},
                 timeout=30,
             )
-            resp.raise_for_status()
             data = resp.json()
 
             logger.info(f"Agent 任务创建成功 | id={data.get('id')} | status={data.get('status')}")
@@ -117,14 +121,16 @@ class CursorAgent:
         try:
             logger.debug(f"发送 followup | agent_id={agent_id}")
 
-            resp = httpx.post(
+            resp = request_with_retry(
+                self.client,
+                "POST",
                 url,
+                request_name="发送 Agent followup",
                 json=payload,
                 auth=self._get_auth(),
                 headers={"Content-Type": "application/json"},
                 timeout=30,
             )
-            resp.raise_for_status()
             data = resp.json()
 
             logger.info(f"Followup 发送成功 | agent_id={agent_id}")
@@ -151,12 +157,14 @@ class CursorAgent:
         url = f"{self.BASE_URL}/v0/agents/{agent_id}"
 
         try:
-            resp = httpx.get(
+            resp = request_with_retry(
+                self.client,
+                "GET",
                 url,
+                request_name="获取 Agent 状态",
                 auth=self._get_auth(),
-                timeout=10,
+                timeout=settings.cursor_status_timeout_seconds,
             )
-            resp.raise_for_status()
             return resp.json()
 
         except httpx.HTTPError as e:
