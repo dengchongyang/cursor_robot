@@ -27,7 +27,7 @@ def main():
     setup_logging()
     memory_store.init_db()
     memory_store.sync_memories_to_markdown()
-    knowledge_retriever.sync()
+    knowledge_retriever.sync(force=True)
 
     logger.info("=" * 50)
     logger.info("飞书机器人 + Cursor Agent 桥接服务")

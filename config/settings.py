@@ -20,6 +20,20 @@ class Settings(BaseSettings):
     cursor_github_ref: str = "main"
     cursor_model: str = "gemini-3-flash"  # Agent使用的模型
     memory_db_path: str = "data/robot_memory.db"
+    history_message_limit: int = 10
+    knowledge_retrieval_limit: int = 2
+    recent_operations_limit: int = 3
+    long_term_memory_limit: int = 4
+    knowledge_sync_interval_seconds: int = 60
+    send_processing_reply_in_p2p: bool = True
+    processing_reply_text: str = "收到，我先处理中，稍后给你结果。"
+    agent_poll_interval_seconds: int = 8
+    agent_poll_timeout_seconds: int = 600
+    notify_on_agent_completion: bool = False
+    notify_on_agent_failure: bool = True
+    notify_on_agent_timeout: bool = True
+    history_resolve_remote_names: bool = False
+    history_resolve_quotes: bool = False
 
     # 群聊消息模式：all=所有消息都转发 | mention_only=只有@机器人才转发
     group_chat_mode: str = "mention_only"

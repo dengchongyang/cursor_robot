@@ -78,7 +78,7 @@ SYSTEM_PROMPT_TEMPLATE = '''
 
 ---
 
-# 聊天窗口的对话历史（最近20条）
+# 聊天窗口的对话历史（最近若干条）
 {chat_history}
 
 ---

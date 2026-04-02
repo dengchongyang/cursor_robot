@@ -6,11 +6,13 @@ from __future__ import annotations
 
 import hashlib
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 
 from loguru import logger
 
+from config import settings
 from runtime_memory import memory_store
 
 
@@ -78,9 +80,14 @@ class KnowledgeRetriever:
             self.workspace_root / "skills",
         ]
         self.allowed_suffixes = {".md", ".txt", ".rst"}
+        self._last_sync_at = 0.0
 
-    def sync(self) -> None:
+    def sync(self, force: bool = False) -> None:
         """同步知识库，自动增量更新文档切块。"""
+        now = time.time()
+        if not force and self._last_sync_at and now - self._last_sync_at < settings.knowledge_sync_interval_seconds:
+            return
+
         active_paths: set[str] = set()
 
         for target in self.knowledge_targets:
@@ -92,6 +99,7 @@ class KnowledgeRetriever:
                         self._sync_file(file_path, active_paths)
 
         self._prune_deleted_files(active_paths)
+        self._last_sync_at = now
 
     def retrieve(self, query: str, limit: int = 5) -> list[dict]:
         """根据查询返回最相关的文档片段。"""

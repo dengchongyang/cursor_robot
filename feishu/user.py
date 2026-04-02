@@ -12,7 +12,7 @@ from config import settings
 _user_cache: dict[str, str] = {}
 
 
-def get_user_name(open_id: str) -> str:
+def get_user_name(open_id: str, allow_remote: bool = True) -> str:
     """
     根据 open_id 获取用户姓名
     
@@ -24,6 +24,11 @@ def get_user_name(open_id: str) -> str:
     """
     if open_id in _user_cache:
         return _user_cache[open_id]
+
+    if not allow_remote:
+        fallback = f"用户_{open_id[-4:]}"
+        _user_cache[open_id] = fallback
+        return fallback
 
     url = f"https://open.feishu.cn/open-apis/contact/v3/users/{open_id}"
     token = TokenManager.get_token()

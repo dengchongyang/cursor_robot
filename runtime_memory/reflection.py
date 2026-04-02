@@ -93,6 +93,9 @@ def reflect_and_store(
     result_summary: str,
 ) -> None:
     """根据用户消息和处理结果生成候选记忆，并提升高价值事实。"""
+    if not user_message.strip() and status in {"completed", "submitted"}:
+        return
+
     candidates: list[tuple[str, str, float]] = []
     candidates.extend(_extract_preference_memories(user_message))
     candidates.extend(_extract_convention_memories(user_message))

@@ -32,6 +32,10 @@ htmlcov/
 logs/
 app.log
 
+# Runtime memory artifacts
+data/
+memory/auto_memory.md
+
 # 系统文件
 .DS_Store
 Thumbs.db

@@ -11,6 +11,7 @@ import time
 import httpx
 from loguru import logger
 
+from config import settings
 from feishu.token import TokenManager
 from feishu.user import get_user_name, get_bot_name
 from feishu.message_parser import (
@@ -69,7 +70,12 @@ def get_message_by_id(message_id: str, token: str) -> str | None:
         return None
 
 
-def get_chat_history(chat_id: str, limit: int = 50) -> tuple[list[dict], list[dict]]:
+def get_chat_history(
+    chat_id: str,
+    limit: int = 50,
+    resolve_remote_names: bool | None = None,
+    resolve_quotes: bool | None = None,
+) -> tuple[list[dict], list[dict]]:
     """
     获取聊天历史消息
     
@@ -80,6 +86,11 @@ def get_chat_history(chat_id: str, limit: int = 50) -> tuple[list[dict], list[di
     Returns:
         tuple: (消息列表, 图片列表)
     """
+    if resolve_remote_names is None:
+        resolve_remote_names = settings.history_resolve_remote_names
+    if resolve_quotes is None:
+        resolve_quotes = settings.history_resolve_quotes
+
     url = "https://open.feishu.cn/open-apis/im/v1/messages"
     token = TokenManager.get_token()
 
@@ -115,7 +126,12 @@ def get_chat_history(chat_id: str, limit: int = 50) -> tuple[list[dict], list[di
         images = []
 
         for item in reversed(items):
-            msg, imgs = _parse_message(item, token)
+            msg, imgs = _parse_message(
+                item,
+                token,
+                resolve_remote_names=resolve_remote_names,
+                resolve_quotes=resolve_quotes,
+            )
             if msg:
                 messages.append(msg)
             if imgs:
@@ -132,7 +148,12 @@ def get_chat_history(chat_id: str, limit: int = 50) -> tuple[list[dict], list[di
         return [], []
 
 
-def _parse_message(item: dict, token: str) -> tuple[dict | None, list[dict]]:
+def _parse_message(
+    item: dict,
+    token: str,
+    resolve_remote_names: bool = True,
+    resolve_quotes: bool = True,
+) -> tuple[dict | None, list[dict]]:
     """
     解析单条消息，支持引用回复
     
@@ -163,14 +184,14 @@ def _parse_message(item: dict, token: str) -> tuple[dict | None, list[dict]]:
         if sender_type == "app":
             sender_name = get_bot_name(sender_id)
         else:
-            sender_name = get_user_name(sender_id) if sender_id else "未知用户"
+            sender_name = get_user_name(sender_id, allow_remote=resolve_remote_names) if sender_id else "未知用户"
 
         # 获取 @ 提及信息
         mentions = item.get("mentions", [])
         
         # 获取引用消息内容
         quoted_text = None
-        if parent_id:
+        if parent_id and resolve_quotes:
             quoted_text = get_message_by_id(parent_id, token)
 
         # 根据消息类型解析内容

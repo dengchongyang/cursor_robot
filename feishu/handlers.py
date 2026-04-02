@@ -9,15 +9,16 @@
 
 import json
 import threading
+import time
 import httpx
 from loguru import logger
 from lark_oapi.api.im.v1 import P2ImMessageReceiveV1
 
 from config.settings import settings
+from cursor import CursorAgent, start_agent_polling
 from feishu.token import TokenManager
 from feishu.history import get_chat_history, format_history
 from feishu.user import get_user_name
-from cursor.agent import CursorAgent
 from knowledge import knowledge_retriever
 from prompts.system_prompt import build_prompt
 from runtime_memory import memory_store, reflect_and_store
@@ -40,13 +41,18 @@ def _get_chat_lock(chat_id: str) -> threading.Lock:
 
 def send_error_reply(chat_id: str, error_msg: str = "抱歉，处理请求时出现错误，请稍后重试。"):
     """发送错误兜底回复"""
+    send_text_reply(chat_id, error_msg)
+
+
+def send_text_reply(chat_id: str, text: str):
+    """发送文本消息。"""
     try:
         token = TokenManager.get_token()
         url = "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id"
         payload = {
             "receive_id": chat_id,
             "msg_type": "text",
-            "content": json.dumps({"text": error_msg}),
+            "content": json.dumps({"text": text}),
         }
         resp = httpx.post(
             url,
@@ -55,11 +61,11 @@ def send_error_reply(chat_id: str, error_msg: str = "抱歉，处理请求时出
             timeout=10,
         )
         if resp.status_code == 200:
-            logger.info(f"已发送错误兜底回复 | chat_id={chat_id}")
+            logger.info(f"已发送文本回复 | chat_id={chat_id}")
         else:
-            logger.error(f"发送兜底回复失败 | status={resp.status_code}")
+            logger.error(f"发送文本回复失败 | status={resp.status_code}")
     except Exception as e:
-        logger.error(f"发送兜底回复异常: {e}")
+        logger.error(f"发送文本回复异常: {e}")
 
 
 def _is_bot_mentioned(mentions) -> bool:
@@ -135,30 +141,44 @@ def _process_message(message_id: str, chat_id: str, chat_type: str, sender_name:
 
 def _do_process_message(message_id: str, chat_id: str, chat_type: str, sender_name: str):
     """实际处理消息的逻辑"""
+    started_at = time.perf_counter()
+    user_message = ""
     try:
         logger.info(f"开始处理消息 | msg_id={message_id} | chat_type={chat_type} | sender={sender_name}")
 
         # 获取 token
         token = TokenManager.get_token()
+        token_ready_at = time.perf_counter()
 
-        # 获取聊天历史（最近20条，已包含当前消息）
-        history, images = get_chat_history(chat_id, limit=20)
+        if chat_type == "p2p" and settings.send_processing_reply_in_p2p:
+            send_text_reply(chat_id, settings.processing_reply_text)
+
+        # 获取聊天历史（最近若干条，已包含当前消息）
+        history, images = get_chat_history(chat_id, limit=settings.history_message_limit)
         if history:
             memory_store.save_messages(chat_id, chat_type, history)
         else:
-            history = memory_store.get_recent_messages(chat_id, limit=20)
+            history = memory_store.get_recent_messages(chat_id, limit=settings.history_message_limit)
             if history:
                 logger.info(f"聊天历史接口超时，已回退到本地持久化记忆 | chat_id={chat_id} | msgs={len(history)}")
+        history_ready_at = time.perf_counter()
 
         history_text = format_history(history)
 
         # 从历史消息中提取最后一条作为用户消息摘要
         user_message = history[-1]["content"] if history else "[无法获取消息内容]"
         persistent_memory = memory_store.build_memory_digest(chat_id)
-        long_term_memories = memory_store.format_long_term_memories(chat_id, limit=6)
-        recent_operations = memory_store.format_recent_operations(chat_id, limit=5)
-        retrieval_query = "\n".join(filter(None, [user_message, history_text[-1200:]]))
-        retrieved_docs = knowledge_retriever.format_for_prompt(retrieval_query, limit=4)
+        long_term_memories = memory_store.format_long_term_memories(
+            chat_id, limit=settings.long_term_memory_limit
+        )
+        recent_operations = memory_store.format_recent_operations(
+            chat_id, limit=settings.recent_operations_limit
+        )
+        retrieval_query = "\n".join(filter(None, [user_message, history_text[-600:]]))
+        retrieved_docs = knowledge_retriever.format_for_prompt(
+            retrieval_query, limit=settings.knowledge_retrieval_limit
+        )
+        prompt_context_ready_at = time.perf_counter()
         memory_store.upsert_operation(
             chat_id=chat_id,
             message_id=message_id,
@@ -181,10 +201,12 @@ def _do_process_message(message_id: str, chat_id: str, chat_type: str, sender_na
             sender_name=sender_name,
             chat_type=chat_type,
         )
+        prompt_ready_at = time.perf_counter()
 
         # 创建 Agent 任务
         agent = CursorAgent()
-        cached_agent_id = _agent_cache.get(chat_id)
+        persisted_session = memory_store.get_chat_session(chat_id)
+        cached_agent_id = _agent_cache.get(chat_id) or (persisted_session or {}).get("agent_id", "")
 
         # 优先尝试 followup，失败则创建新 Agent
         result = None
@@ -195,27 +217,39 @@ def _do_process_message(message_id: str, chat_id: str, chat_type: str, sender_na
         if not result:
             result = agent.create_task(prompt, images=images or None)
             result_mode = "create_task"
+        agent_request_ready_at = time.perf_counter()
 
         # 更新缓存
         if result:
             resolved_agent_id = result.get("id") or cached_agent_id or ""
+            target = result.get("target") or {}
+            cursor_url = target.get("url", "") or ""
             _agent_cache[chat_id] = resolved_agent_id
+            memory_store.set_chat_session(
+                chat_id=chat_id,
+                agent_id=resolved_agent_id,
+                status=result.get("status") or "SUBMITTED",
+                cursor_url=cursor_url,
+            )
             memory_store.complete_operation(
                 chat_id=chat_id,
                 message_id=message_id,
-                status="succeeded",
+                status="submitted",
                 agent_id=resolved_agent_id,
-                result_summary=f"{result_mode} 成功，agent_id={resolved_agent_id or 'unknown'}",
+                result_summary=f"{result_mode} 已提交，agent_id={resolved_agent_id or 'unknown'}",
+                cursor_url=cursor_url,
+                polled_status=result.get("status") or "SUBMITTED",
             )
-            reflect_and_store(
+            start_agent_polling(
                 chat_id=chat_id,
                 message_id=message_id,
-                user_message=user_message,
-                status="succeeded",
-                result_summary=f"{result_mode} 成功，agent_id={resolved_agent_id or 'unknown'}",
+                agent_id=resolved_agent_id,
+                notify=lambda text: send_text_reply(chat_id, text),
             )
             logger.info(f"Agent 任务成功 | msg_id={message_id} | agent_id={_agent_cache[chat_id]}")
         else:
+            if cached_agent_id:
+                memory_store.set_chat_session(chat_id=chat_id, agent_id=cached_agent_id, status="FOLLOWUP_FAILED")
             memory_store.complete_operation(
                 chat_id=chat_id,
                 message_id=message_id,
@@ -232,6 +266,18 @@ def _do_process_message(message_id: str, chat_id: str, chat_type: str, sender_na
             )
             logger.error(f"Agent 任务失败 | msg_id={message_id}")
             send_error_reply(chat_id, "抱歉，创建任务失败（网络错误），请稍后重试。")
+
+        logger.info(
+            "处理耗时 | msg_id={} | token={:.2f}s | history={:.2f}s | context={:.2f}s | prompt={:.2f}s | agent_api={:.2f}s | total={:.2f}s".format(
+                message_id,
+                token_ready_at - started_at,
+                history_ready_at - token_ready_at,
+                prompt_context_ready_at - history_ready_at,
+                prompt_ready_at - prompt_context_ready_at,
+                agent_request_ready_at - prompt_ready_at,
+                agent_request_ready_at - started_at,
+            )
+        )
 
     except Exception as e:
         error_summary = f"异常: {str(e)[:120]}"

@@ -79,6 +79,10 @@ class MemoryStore:
                         user_message TEXT NOT NULL DEFAULT '',
                         history_excerpt TEXT NOT NULL DEFAULT '',
                         agent_id TEXT NOT NULL DEFAULT '',
+                        cursor_url TEXT NOT NULL DEFAULT '',
+                        polled_status TEXT NOT NULL DEFAULT '',
+                        last_polled_at TEXT NOT NULL DEFAULT '',
+                        notify_state TEXT NOT NULL DEFAULT '',
                         status TEXT NOT NULL DEFAULT 'received',
                         result_summary TEXT NOT NULL DEFAULT '',
                         created_at TEXT NOT NULL,
@@ -91,6 +95,17 @@ class MemoryStore:
                     """
                     CREATE INDEX IF NOT EXISTS idx_operation_logs_chat_created_at
                     ON operation_logs(chat_id, created_at)
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS chat_sessions (
+                        chat_id TEXT PRIMARY KEY,
+                        agent_id TEXT NOT NULL DEFAULT '',
+                        status TEXT NOT NULL DEFAULT '',
+                        cursor_url TEXT NOT NULL DEFAULT '',
+                        updated_at TEXT NOT NULL
+                    )
                     """
                 )
                 conn.execute(
@@ -158,8 +173,20 @@ class MemoryStore:
                 )
                 conn.commit()
 
+                self._ensure_column(conn, "operation_logs", "cursor_url", "TEXT NOT NULL DEFAULT ''")
+                self._ensure_column(conn, "operation_logs", "polled_status", "TEXT NOT NULL DEFAULT ''")
+                self._ensure_column(conn, "operation_logs", "last_polled_at", "TEXT NOT NULL DEFAULT ''")
+                self._ensure_column(conn, "operation_logs", "notify_state", "TEXT NOT NULL DEFAULT ''")
+
             self._initialized = True
             logger.info(f"本地记忆库已就绪 | db={self.db_path}")
+
+    @staticmethod
+    def _ensure_column(conn: sqlite3.Connection, table_name: str, column_name: str, definition: str) -> None:
+        """为已存在的表补充缺失列。"""
+        columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()}
+        if column_name not in columns:
+            conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -235,6 +262,36 @@ class MemoryStore:
                 }
             )
         return messages
+
+    def set_chat_session(self, chat_id: str, agent_id: str, status: str = "", cursor_url: str = "") -> None:
+        """持久化当前会话关联的 Agent，用于跨重启续接 followup。"""
+        now = datetime.utcnow().isoformat(timespec="seconds")
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO chat_sessions (chat_id, agent_id, status, cursor_url, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(chat_id) DO UPDATE SET
+                    agent_id = excluded.agent_id,
+                    status = excluded.status,
+                    cursor_url = excluded.cursor_url,
+                    updated_at = excluded.updated_at
+                """,
+                (chat_id, agent_id, status, cursor_url, now),
+            )
+
+    def get_chat_session(self, chat_id: str) -> dict | None:
+        """读取当前会话关联的 Agent 信息。"""
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT chat_id, agent_id, status, cursor_url, updated_at
+                FROM chat_sessions
+                WHERE chat_id = ?
+                """,
+                (chat_id,),
+            ).fetchone()
+        return dict(row) if row else None
 
     def add_memory_candidate(
         self,
@@ -370,17 +427,68 @@ class MemoryStore:
         status: str,
         agent_id: str = "",
         result_summary: str = "",
+        cursor_url: str | None = None,
+        polled_status: str | None = None,
+        notify_state: str | None = None,
     ) -> None:
         """更新任务处理结果。"""
         now = datetime.utcnow().isoformat(timespec="seconds")
         with self._connect() as conn:
+            updates = [
+                ("status", status),
+                ("agent_id", agent_id),
+                ("result_summary", _truncate(result_summary, 500)),
+                ("updated_at", now),
+            ]
+            if cursor_url is not None:
+                updates.append(("cursor_url", cursor_url))
+            if polled_status is not None:
+                updates.append(("polled_status", polled_status))
+                updates.append(("last_polled_at", now))
+            if notify_state is not None:
+                updates.append(("notify_state", notify_state))
+
+            set_clause = ", ".join(f"{column} = ?" for column, _ in updates)
+            params = [value for _, value in updates] + [chat_id, message_id]
             conn.execute(
-                """
+                f"""
                 UPDATE operation_logs
-                SET status = ?, agent_id = ?, result_summary = ?, updated_at = ?
+                SET {set_clause}
                 WHERE chat_id = ? AND message_id = ?
                 """,
-                (status, agent_id, _truncate(result_summary, 500), now, chat_id, message_id),
+                params,
+            )
+
+    def update_operation_polling(
+        self,
+        chat_id: str,
+        message_id: str,
+        polled_status: str,
+        cursor_url: str = "",
+        notify_state: str | None = None,
+    ) -> None:
+        """更新轮询状态，但不改变业务结果。"""
+        now = datetime.utcnow().isoformat(timespec="seconds")
+        with self._connect() as conn:
+            updates = [
+                ("polled_status", polled_status),
+                ("last_polled_at", now),
+                ("updated_at", now),
+            ]
+            if cursor_url:
+                updates.append(("cursor_url", cursor_url))
+            if notify_state is not None:
+                updates.append(("notify_state", notify_state))
+
+            set_clause = ", ".join(f"{column} = ?" for column, _ in updates)
+            params = [value for _, value in updates] + [chat_id, message_id]
+            conn.execute(
+                f"""
+                UPDATE operation_logs
+                SET {set_clause}
+                WHERE chat_id = ? AND message_id = ?
+                """,
+                params,
             )
 
     def get_recent_operations(self, chat_id: str, limit: int = 5) -> list[dict]:
@@ -425,11 +533,13 @@ class MemoryStore:
         ]
 
         succeeded = next((op for op in recent_ops if op["status"] == "succeeded"), None)
+        completed = next((op for op in recent_ops if op["status"] == "completed"), None)
         failed = next((op for op in recent_ops if op["status"] == "failed"), None)
 
-        if succeeded:
+        if succeeded or completed:
+            success_op = succeeded or completed
             lines.append(
-                f"- 最近一次成功任务：{_truncate(succeeded['user_message'])}。结果：{_truncate(succeeded['result_summary'] or '已成功提交给 Agent')}"
+                f"- 最近一次成功任务：{_truncate(success_op['user_message'])}。结果：{_truncate(success_op['result_summary'] or '已成功提交给 Agent')}"
             )
         if failed:
             lines.append(
