@@ -14,3 +14,4 @@
 - `feishu-reply.md`
 - `bug-triage.md`
 - `deploy-checklist.md`
+- `rtc-troubleshooting.md` (RTC 通话无声排障 SOP)
