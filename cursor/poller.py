@@ -15,7 +15,7 @@ from runtime_memory import memory_store, reflect_and_store
 
 from .agent import CursorAgent
 
-_active_polls: set[tuple[str, str, str]] = set()
+_active_polls: set[str] = set()
 _poll_lock = threading.Lock()
 
 
@@ -42,9 +42,44 @@ def _build_failure_message(status: str, cursor_url: str) -> str:
     return f"任务处理结束，但状态为 {status}。{suffix}".strip()
 
 
+def _extract_status_failure_detail(status_data: dict) -> str:
+    """从状态接口结果中提取更细的失败摘要。"""
+    candidates = [
+        status_data.get("error"),
+        status_data.get("message"),
+        status_data.get("summary"),
+        status_data.get("detail"),
+        status_data.get("failureReason"),
+    ]
+    target = status_data.get("target") or {}
+    candidates.extend(
+        [
+            target.get("error"),
+            target.get("message"),
+        ]
+    )
+
+    for item in candidates:
+        if isinstance(item, str) and item.strip():
+            return item.strip()
+        if isinstance(item, dict):
+            for key in ("message", "error", "detail"):
+                value = item.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+    return ""
+
+
 def _build_timeout_message(cursor_url: str) -> str:
     suffix = f" 你也可以到 Cursor 查看当前状态：{cursor_url}" if cursor_url else ""
     return f"任务处理时间较长，后台仍可能在继续执行。{suffix}".strip()
+
+
+def _build_detailed_failure_message(status: str, detail: str, cursor_url: str) -> str:
+    suffix = f" 可在 Cursor 查看详情：{cursor_url}" if cursor_url else ""
+    if detail:
+        return f"任务处理结束，状态为 {status}。\n原因：{detail[:220]}{suffix}"
+    return _build_failure_message(status, cursor_url)
 
 
 def start_agent_polling(
@@ -57,9 +92,10 @@ def start_agent_polling(
     if not agent_id:
         return
 
-    key = (chat_id, message_id, agent_id)
+    key = agent_id
     with _poll_lock:
         if key in _active_polls:
+            logger.debug(f"Agent 已有活跃轮询线程，跳过重复启动 | agent_id={agent_id} | msg_id={message_id}")
             return
         _active_polls.add(key)
 
@@ -76,7 +112,7 @@ def _poll_agent_status(
     message_id: str,
     agent_id: str,
     notify: Callable[[str], None],
-    poll_key: tuple[str, str, str],
+    poll_key: str,
 ) -> None:
     agent = CursorAgent()
     started_at = time.time()
@@ -151,6 +187,9 @@ def _poll_agent_status(
                             )
                     else:
                         summary = f"Agent 终止 | status={normalized_status}"
+                        failure_detail = _extract_status_failure_detail(status_data)
+                        if failure_detail:
+                            summary += f" | detail={failure_detail[:220]}"
                         if cursor_url:
                             summary += f" | url={cursor_url}"
                         memory_store.complete_operation(
@@ -176,7 +215,13 @@ def _poll_agent_status(
                             result_summary=summary,
                         )
                         if settings.notify_on_agent_failure:
-                            notify(_build_failure_message(normalized_status, cursor_url or last_url))
+                            notify(
+                                _build_detailed_failure_message(
+                                    normalized_status,
+                                    failure_detail,
+                                    cursor_url or last_url,
+                                )
+                            )
                             memory_store.update_operation_polling(
                                 chat_id=chat_id,
                                 message_id=message_id,
@@ -186,7 +231,12 @@ def _poll_agent_status(
                             )
                     return
 
-            time.sleep(settings.agent_poll_interval_seconds)
+            sleep_seconds = (
+                settings.agent_poll_interval_seconds
+                if status_data
+                else settings.cursor_rate_limit_backoff_seconds
+            )
+            time.sleep(sleep_seconds)
 
         timeout_summary = "Agent 轮询超时，未观察到终态"
         if last_url:

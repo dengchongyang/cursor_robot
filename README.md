@@ -60,6 +60,9 @@ cp .env.example .env
 | `CURSOR_MODEL` | 模型名，默认 `gemini-3-flash` |
 | `GROUP_CHAT_MODE` | `mention_only` 或 `all` |
 | `MEMORY_DB_PATH` | 本地记忆数据库路径 |
+| `QUICK_REPLY_ENABLED` | 是否启用即时首答 |
+| `QUICK_REPLY_API_KEY` | 可选，配置后用快模型生成首答 |
+| `QUICK_REPLY_MODEL` | 即时首答模型，默认 `gpt-4.1-mini` |
 
 ### 3. 飞书开放平台配置
 
@@ -98,6 +101,8 @@ python main.py
 - 单聊：直接给机器人发消息
 - 群聊：@机器人后发送消息
 - 长任务：会先收到一条“处理中”的即时回执
+- 收到消息后：桥接层会优先发送一条即时首答，再继续后台完整执行
+- 长任务执行期间：Agent 会主动发送简短进度更新
 - 失败或超时：桥接层会主动补发状态通知
 
 ## 目录结构
@@ -160,7 +165,7 @@ python main.py
 
 - 历史消息默认只取较小窗口
 - 文档知识库按间隔同步，不再每条消息都全量扫描
-- 单聊先回“处理中”提升体感速度
+- 先发即时首答提升体感速度
 - 历史消息默认不回源拉旧引用内容
 - 历史消息默认不为旧消息逐条远程查用户名
 - 会话级 `agent_id` 持久化，服务重启后优先尝试 followup
@@ -178,6 +183,8 @@ python main.py
 | `LONG_TERM_MEMORY_LIMIT` | `4` | 长期记忆条数 |
 | `KNOWLEDGE_SYNC_INTERVAL_SECONDS` | `60` | 知识库同步间隔 |
 | `SEND_PROCESSING_REPLY_IN_P2P` | `true` | 单聊是否先发处理中 |
+| `QUICK_REPLY_ENABLED` | `true` | 是否启用即时首答 |
+| `QUICK_REPLY_MODEL` | `gpt-4.1-mini` | 即时首答模型 |
 | `AGENT_POLL_INTERVAL_SECONDS` | `8` | Agent 轮询间隔 |
 | `AGENT_POLL_TIMEOUT_SECONDS` | `600` | Agent 轮询超时 |
 | `NOTIFY_ON_AGENT_COMPLETION` | `false` | 完成后是否额外通知 |

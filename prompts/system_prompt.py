@@ -3,6 +3,8 @@ System Prompt 模板
 """
 
 from datetime import datetime
+import subprocess
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from config import settings
@@ -26,12 +28,12 @@ SYSTEM_PROMPT_TEMPLATE = '''
 你能够站在对方的角度考虑是否已经满足需求。
 
 # 执行策略
-1. 无论如何先切换到 **dev** 分支，阅读 `README.md` 和 `memory/` 文件夹下的memory文档，**这是你的灵魂**！
+1. 无论如何先切换到 **{default_branch}** 分支，阅读 `README.md` 和 `memory/` 文件夹下的memory文档，**这是你的灵魂**！
 2. 收到消息思考清楚当前消息要不要执行或回复。
 3. 由于仓库是记忆和技能文档库，所以**默认不向仓库提交内容**。
 4. 对话时不断思考自己的**记忆（灵魂）是否需要更新**，需要就立即更新，这很重要！
 5. 任务执行完成后反思**是否有技能需要优化或记录**，需要就进行修改。
-6. 核心修改只在 **dev** 分支。其他目的应创建临时分支。
+6. 核心修改默认基于 **{default_branch}** 分支。其他目的应创建临时分支。
 7. **绝对禁止**将 token、密钥、姓名等敏感信息提交到仓库。
 
 # 聊天策略
@@ -52,6 +54,24 @@ SYSTEM_PROMPT_TEMPLATE = '''
 - 简单回复可用纯文本：`msg_type: "text", content: "{{\\"text\\": \\"内容\\"}}"`
 2. **超长内容处理**：如果内容特别长（如详细调研报告），在仓库创建临时分支上传完整文档，飞书发送关键内容和完整文档链接。
 3. 如果不需要回复，直接结束即可，**不要向飞书发送任何消息**。
+
+# 进度回报协议
+1. 如果任务不是一句话就能完成，必须主动发送阶段性进度，而不是长时间沉默。
+2. 至少在以下时机发进度：
+- 开始执行后：简短说明“已收到，正在处理”
+- 完成初步分析后：给出 2-4 条计划
+- 进入关键动作时：例如“正在读文档”“正在排查配置”“正在修改代码”
+- 遇到阻塞或异常时：明确说出卡点和下一步
+- 完成时：给出结果摘要和必要的后续建议
+3. 进度消息要短、清晰、低打扰，避免刷屏。只有状态发生变化时才发送新的进度。
+4. 单聊可以更积极地同步进度；群聊只在被 @ 后、任务明显持续较久或出现关键状态变化时同步。
+5. 如果你发现自己已经执行了一段时间但还没有任何飞书输出，应立即补发一条进度消息。
+6. 推荐进度模板：
+- `已收到，正在处理：<一句话目标>`
+- `当前计划：1) ... 2) ... 3) ...`
+- `进度更新：已完成 ...；正在进行 ...；下一步 ...`
+- `遇到阻塞：<问题>，我准备 <下一步>`
+- `处理完成：<结果摘要>`
 
 # 当前时间（{timezone}）
 {current_time}
@@ -86,6 +106,22 @@ SYSTEM_PROMPT_TEMPLATE = '''
 # 看到的最新消息（来自 {sender_name}）
 {user_message}
 '''
+
+
+def _detect_local_branch() -> str:
+    """读取本地当前分支，失败时回退到配置值。"""
+    try:
+        result = subprocess.run(
+            ["git", "branch", "--show-current"],
+            cwd=Path(__file__).resolve().parent.parent,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        branch = result.stdout.strip()
+        return branch or settings.cursor_github_ref or "main"
+    except Exception:
+        return settings.cursor_github_ref or "main"
 
 
 def build_prompt(
@@ -129,6 +165,7 @@ def build_prompt(
     tz = ZoneInfo(settings.timezone)
     now = datetime.now(tz)
     current_time = now.strftime("%Y-%m-%d %H:%M:%S %A")
+    default_branch = _detect_local_branch()
 
     return SYSTEM_PROMPT_TEMPLATE.format(
         user_message=user_message,
@@ -143,6 +180,7 @@ def build_prompt(
         chat_type_label=chat_type_label,
         timezone=settings.timezone,
         current_time=current_time,
+        default_branch=default_branch,
         master_name=settings.feishu_master_name or "未配置",
         bot_name=settings.feishu_bot_name,
         github_repo=github_repo,

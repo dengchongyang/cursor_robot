@@ -16,12 +16,14 @@ from lark_oapi.api.im.v1 import P2ImMessageReceiveV1
 
 from config.settings import settings
 from cursor import CursorAgent, start_agent_polling
+from feishu.message_parser import parse_interactive, parse_text
 from feishu.token import TokenManager
 from feishu.history import get_chat_history, format_history
 from feishu.user import get_user_name
 from knowledge import knowledge_retriever
 from network import get_feishu_client, request_with_retry
 from prompts.system_prompt import build_prompt
+from quick_reply import generate_quick_reply
 from runtime_memory import memory_store, reflect_and_store
 
 # chat_id -> agent_id 缓存，用于 followup
@@ -44,6 +46,15 @@ def _get_chat_lock(chat_id: str) -> threading.Lock:
 def send_error_reply(chat_id: str, error_msg: str = "抱歉，处理请求时出现错误，请稍后重试。"):
     """发送错误兜底回复"""
     send_text_reply(chat_id, error_msg)
+
+
+def _build_user_facing_error(error_summary: str, fallback: str) -> str:
+    """将底层错误转换为更适合发给飞书用户的文本。"""
+    summary = (error_summary or "").strip()
+    if not summary:
+        return fallback
+    summary = summary.replace("\n", " ").strip()
+    return f"{fallback}\n原因：{summary[:220]}"
 
 
 def send_text_reply(chat_id: str, text: str):
@@ -84,6 +95,54 @@ def _is_bot_mentioned(mentions) -> bool:
     return False
 
 
+def _extract_current_message_preview(message) -> str:
+    """直接从飞书事件体提取当前消息预览，避免误拿历史中的上一条消息。"""
+    try:
+        msg_type = getattr(message, "message_type", "") or ""
+        content = getattr(message, "content", "") or ""
+        mentions = getattr(message, "mentions", None)
+
+        if msg_type == "text":
+            return parse_text(content, mentions) or ""
+        if msg_type == "interactive":
+            return parse_interactive(content) or "[卡片消息]"
+        if msg_type == "post":
+            try:
+                data = json.loads(content)
+                return json.dumps(data, ensure_ascii=False)[:200]
+            except Exception:
+                return "[富文本消息]"
+        if msg_type == "image":
+            return "[图片]"
+        if msg_type == "file":
+            try:
+                file_info = json.loads(content)
+                file_name = file_info.get("file_name", "文件")
+                return f"[文件: {file_name}]"
+            except Exception:
+                return "[文件]"
+        return ""
+    except Exception:
+        return ""
+
+
+def _sanitize_quick_reply_source(text: str) -> str:
+    """过滤明显属于旧错误提示的内容，避免首答串味。"""
+    normalized = (text or "").strip()
+    if not normalized:
+        return ""
+
+    blocked_markers = [
+        "任务处理结束，但状态为",
+        "可在 Cursor 查看详情",
+        "已收到，你现在想处理的是：已收到，你现在想处理的是：",
+        "抱歉，创建或续接任务失败",
+    ]
+    if any(marker in normalized for marker in blocked_markers):
+        return ""
+    return normalized
+
+
 def create_message_handler():
     """创建消息接收事件处理器"""
 
@@ -115,11 +174,12 @@ def create_message_handler():
             # 获取发送者名字
             sender_open_id = sender.sender_id.open_id if sender.sender_id else ""
             sender_name = get_user_name(sender_open_id) if sender_open_id else "未知用户"
+            current_message_preview = _extract_current_message_preview(message)
 
             # 异步处理，立即返回（避免飞书重发）
             thread = threading.Thread(
                 target=_process_message,
-                args=(message_id, chat_id, chat_type, sender_name),
+                args=(message_id, chat_id, chat_type, sender_name, current_message_preview),
                 daemon=True,
             )
             thread.start()
@@ -131,7 +191,13 @@ def create_message_handler():
     return handle_message
 
 
-def _process_message(message_id: str, chat_id: str, chat_type: str, sender_name: str):
+def _process_message(
+    message_id: str,
+    chat_id: str,
+    chat_type: str,
+    sender_name: str,
+    current_message_preview: str = "",
+):
     """
     异步处理消息，创建 Cursor Agent 任务或发送 followup
     
@@ -141,10 +207,16 @@ def _process_message(message_id: str, chat_id: str, chat_type: str, sender_name:
     chat_lock = _get_chat_lock(chat_id)
     
     with chat_lock:
-        _do_process_message(message_id, chat_id, chat_type, sender_name)
+        _do_process_message(message_id, chat_id, chat_type, sender_name, current_message_preview)
 
 
-def _do_process_message(message_id: str, chat_id: str, chat_type: str, sender_name: str):
+def _do_process_message(
+    message_id: str,
+    chat_id: str,
+    chat_type: str,
+    sender_name: str,
+    current_message_preview: str = "",
+):
     """实际处理消息的逻辑"""
     started_at = time.perf_counter()
     user_message = ""
@@ -154,9 +226,6 @@ def _do_process_message(message_id: str, chat_id: str, chat_type: str, sender_na
         # 获取 token
         token = TokenManager.get_token()
         token_ready_at = time.perf_counter()
-
-        if chat_type == "p2p" and settings.send_processing_reply_in_p2p:
-            send_text_reply(chat_id, settings.processing_reply_text)
 
         # 获取聊天历史（最近若干条，已包含当前消息）
         history, images = get_chat_history(chat_id, limit=settings.history_message_limit)
@@ -170,8 +239,16 @@ def _do_process_message(message_id: str, chat_id: str, chat_type: str, sender_na
 
         history_text = format_history(history)
 
-        # 从历史消息中提取最后一条作为用户消息摘要
-        user_message = history[-1]["content"] if history else "[无法获取消息内容]"
+        # 优先使用当前事件体中的消息，避免历史接口尚未包含当前消息时误拿上一条内容
+        fallback_history_message = history[-1]["content"] if history else "[无法获取消息内容]"
+        user_message = _sanitize_quick_reply_source(current_message_preview) or _sanitize_quick_reply_source(
+            fallback_history_message
+        ) or "[无法获取当前消息内容]"
+        quick_reply_text = generate_quick_reply(user_message, chat_type, sender_name)
+        if quick_reply_text:
+            send_text_reply(chat_id, quick_reply_text)
+        elif chat_type == "p2p" and settings.send_processing_reply_in_p2p:
+            send_text_reply(chat_id, settings.processing_reply_text)
         persistent_memory = memory_store.build_memory_digest(chat_id)
         long_term_memories = memory_store.format_long_term_memories(
             chat_id, limit=settings.long_term_memory_limit
@@ -255,22 +332,29 @@ def _do_process_message(message_id: str, chat_id: str, chat_type: str, sender_na
         else:
             if cached_agent_id:
                 memory_store.set_chat_session(chat_id=chat_id, agent_id=cached_agent_id, status="FOLLOWUP_FAILED")
+            failure_summary = agent.last_error_summary or "创建或续接 Agent 失败"
             memory_store.complete_operation(
                 chat_id=chat_id,
                 message_id=message_id,
                 status="failed",
                 agent_id=cached_agent_id or "",
-                result_summary="创建或续接 Agent 失败",
+                result_summary=failure_summary,
             )
             reflect_and_store(
                 chat_id=chat_id,
                 message_id=message_id,
                 user_message=user_message,
                 status="failed",
-                result_summary="创建或续接 Agent 失败",
+                result_summary=failure_summary,
             )
             logger.error(f"Agent 任务失败 | msg_id={message_id}")
-            send_error_reply(chat_id, "抱歉，创建任务失败（网络错误），请稍后重试。")
+            send_error_reply(
+                chat_id,
+                _build_user_facing_error(
+                    failure_summary,
+                    "抱歉，创建或续接任务失败，请检查配置或稍后重试。",
+                ),
+            )
 
         logger.info(
             "处理耗时 | msg_id={} | token={:.2f}s | history={:.2f}s | context={:.2f}s | prompt={:.2f}s | agent_api={:.2f}s | total={:.2f}s".format(

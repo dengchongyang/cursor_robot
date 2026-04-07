@@ -27,7 +27,13 @@ class Settings(BaseSettings):
     knowledge_sync_interval_seconds: int = 60
     send_processing_reply_in_p2p: bool = True
     processing_reply_text: str = "收到，我先处理中，稍后给你结果。"
-    agent_poll_interval_seconds: int = 8
+    quick_reply_enabled: bool = True
+    quick_reply_api_key: str = ""
+    quick_reply_base_url: str = "https://api.openai.com/v1"
+    quick_reply_model: str = "gpt-4.1-mini"
+    quick_reply_timeout_seconds: int = 12
+    quick_reply_max_tokens: int = 160
+    agent_poll_interval_seconds: int = 15
     agent_poll_timeout_seconds: int = 600
     notify_on_agent_completion: bool = False
     notify_on_agent_failure: bool = True
@@ -37,6 +43,7 @@ class Settings(BaseSettings):
     http_retry_attempts: int = 3
     http_retry_backoff_seconds: float = 1.0
     cursor_status_timeout_seconds: int = 20
+    cursor_rate_limit_backoff_seconds: int = 30
 
     # 群聊消息模式：all=所有消息都转发 | mention_only=只有@机器人才转发
     group_chat_mode: str = "mention_only"
