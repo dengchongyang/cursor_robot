@@ -32,14 +32,11 @@ def _is_success_status(status: str) -> bool:
 
 
 def _build_completion_message(cursor_url: str) -> str:
-    if cursor_url:
-        return f"任务处理完成。如果飞书详细结果暂时没到，可以直接查看 Cursor：{cursor_url}"
-    return "任务处理完成。如果飞书详细结果暂时没到，可以稍后再看一下。"
+    return "任务处理完成。"
 
 
 def _build_failure_message(status: str, cursor_url: str) -> str:
-    suffix = f" 可在 Cursor 查看详情：{cursor_url}" if cursor_url else ""
-    return f"任务处理结束，但状态为 {status}。{suffix}".strip()
+    return f"任务处理结束，但状态为 {status}。"
 
 
 def _extract_status_failure_detail(status_data: dict) -> str:
@@ -71,14 +68,12 @@ def _extract_status_failure_detail(status_data: dict) -> str:
 
 
 def _build_timeout_message(cursor_url: str) -> str:
-    suffix = f" 你也可以到 Cursor 查看当前状态：{cursor_url}" if cursor_url else ""
-    return f"任务处理时间较长，后台仍可能在继续执行。{suffix}".strip()
+    return "任务处理时间较长，后台仍可能在继续执行。"
 
 
 def _build_detailed_failure_message(status: str, detail: str, cursor_url: str) -> str:
-    suffix = f" 可在 Cursor 查看详情：{cursor_url}" if cursor_url else ""
     if detail:
-        return f"任务处理结束，状态为 {status}。\n原因：{detail[:220]}{suffix}"
+        return f"任务处理结束，状态为 {status}。\n原因：{detail[:220]}"
     return _build_failure_message(status, cursor_url)
 
 
