@@ -25,9 +25,9 @@ class Settings(BaseSettings):
     recent_operations_limit: int = 3
     long_term_memory_limit: int = 4
     knowledge_sync_interval_seconds: int = 60
-    send_processing_reply_in_p2p: bool = True
+    send_processing_reply_in_p2p: bool = False
     processing_reply_text: str = "收到，我先处理中，稍后给你结果。"
-    quick_reply_enabled: bool = True
+    quick_reply_enabled: bool = False
     quick_reply_api_key: str = ""
     quick_reply_base_url: str = "https://api.openai.com/v1"
     quick_reply_model: str = "gpt-4.1-mini"
@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     agent_poll_timeout_seconds: int = 600
     notify_on_agent_completion: bool = False
     notify_on_agent_failure: bool = True
-    notify_on_agent_timeout: bool = True
+    notify_on_agent_timeout: bool = False
     history_resolve_remote_names: bool = False
     history_resolve_quotes: bool = False
     http_retry_attempts: int = 3
