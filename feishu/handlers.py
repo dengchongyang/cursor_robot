@@ -10,6 +10,7 @@
 import json
 import threading
 import time
+import re
 import httpx
 from loguru import logger
 from lark_oapi.api.im.v1 import P2ImMessageReceiveV1
@@ -20,11 +21,15 @@ from feishu.message_parser import parse_interactive, parse_text
 from feishu.token import TokenManager
 from feishu.history import get_chat_history, format_history
 from feishu.user import get_user_name
-from knowledge import knowledge_retriever
+from knowledge import knowledge_retriever, comein_client
 from network import get_feishu_client, request_with_retry
 from prompts.system_prompt import build_prompt
 from quick_reply import generate_quick_reply
 from runtime_memory import memory_store, reflect_and_store
+
+# 手机号提取正则
+PHONE_REGEX = re.compile(r"1[3-9]\d{9}")
+CODE_REGEX = re.compile(r"\b\d{6}\b")
 
 # chat_id -> agent_id 缓存，用于 followup
 _agent_cache: dict[str, str] = {}
@@ -244,6 +249,36 @@ def _do_process_message(
         user_message = _sanitize_quick_reply_source(current_message_preview) or _sanitize_quick_reply_source(
             fallback_history_message
         ) or "[无法获取当前消息内容]"
+
+        # ComeIn 逻辑集成
+        comein_info = ""
+        if settings.comein_enabled:
+            phone_match = PHONE_REGEX.search(user_message)
+            code_match = CODE_REGEX.search(user_message)
+            
+            if phone_match:
+                phone = phone_match.group()
+                # 检查是否需要验证码（每日首次或 Token 失效）
+                needs_code = memory_store.is_first_query_today("comein") or not comein_client._token
+                
+                if code_match:
+                    code = code_match.group()
+                    if comein_client.login(code):
+                        send_text_reply(chat_id, f"验证码 {code} 已收到。我正在调用 ComeIn 系统深度调取 {phone} 今日的参会质量数据，请稍候。")
+                    else:
+                        send_text_reply(chat_id, "验证码登录失败，请重新发送 6 位验证码。")
+                        return
+                elif needs_code:
+                    send_text_reply(chat_id, f"检测到你提到了手机号 {phone}，请把今天的 6 位验证码发给我，我才能继续查询外部系统。")
+                    return
+                
+                # 调用接口查询日志
+                events = comein_client.get_user_events(phone)
+                if events:
+                    comein_info = f"\n\n# ComeIn 外部查询结果\n手机号 {phone} 今日 user-events-page 日志：\n" + json.dumps(events, ensure_ascii=False, indent=2)
+                else:
+                    comein_info = f"\n\n# ComeIn 外部查询结果\n手机号 {phone} 今日未查询到 user-events-page 日志。"
+
         quick_reply_text = generate_quick_reply(user_message, chat_type, sender_name)
         if quick_reply_text:
             send_text_reply(chat_id, quick_reply_text)
@@ -272,7 +307,7 @@ def _do_process_message(
 
         # 构建 prompt
         prompt = build_prompt(
-            user_message=user_message,
+            user_message=user_message + comein_info,
             chat_id=chat_id,
             tenant_access_token=token,
             chat_history=history_text,

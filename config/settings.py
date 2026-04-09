@@ -45,6 +45,12 @@ class Settings(BaseSettings):
     cursor_status_timeout_seconds: int = 20
     cursor_rate_limit_backoff_seconds: int = 30
 
+    # ComeIn配置
+    comein_enabled: bool = False
+    comein_login_name: str = ""
+    comein_password: str = ""
+    comein_token_cache_path: str = "data/comein_token.json"
+
     # 群聊消息模式：all=所有消息都转发 | mention_only=只有@机器人才转发
     group_chat_mode: str = "mention_only"
 

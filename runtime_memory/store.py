@@ -280,18 +280,14 @@ class MemoryStore:
                 (chat_id, agent_id, status, cursor_url, now),
             )
 
-    def get_chat_session(self, chat_id: str) -> dict | None:
-        """读取当前会话关联的 Agent 信息。"""
-        with self._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT chat_id, agent_id, status, cursor_url, updated_at
-                FROM chat_sessions
-                WHERE chat_id = ?
-                """,
-                (chat_id,),
-            ).fetchone()
-        return dict(row) if row else None
+    def is_first_query_today(self, key: str) -> bool:
+        """检查是否是今日首次查询"""
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+        session = self.get_chat_session(f"daily_first_{key}")
+        if not session or session.get("status") != today:
+            self.set_chat_session(f"daily_first_{key}", status=today)
+            return True
+        return False
 
     def add_memory_candidate(
         self,
