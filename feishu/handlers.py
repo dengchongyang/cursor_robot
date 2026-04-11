@@ -265,7 +265,8 @@ def _do_process_message(
                 if code_match:
                     code = code_match.group()
                     if comein_client.login(code):
-                        send_text_reply(chat_id, f"验证码 {code} 已收到。我正在调用 ComeIn 系统深度调取 {phone} 今日的参会质量数据，请稍候。")
+                        memory_store.mark_first_query_done("comein")
+                        send_text_reply(chat_id, f"验证码 {code} 已收到。我正在调用 ComeIn 系统深度调调取 {phone} 今日的参会质量数据，请稍候。")
                     else:
                         send_text_reply(chat_id, "验证码登录失败，请重新发送 6 位验证码。")
                         return

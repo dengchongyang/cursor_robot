@@ -281,13 +281,15 @@ class MemoryStore:
             )
 
     def is_first_query_today(self, key: str) -> bool:
-        """检查是否是今日首次查询"""
+        """检查是否是今日首次查询（不更新状态）"""
         today = datetime.utcnow().strftime("%Y-%m-%d")
         session = self.get_chat_session(f"daily_first_{key}")
-        if not session or session.get("status") != today:
-            self.set_chat_session(f"daily_first_{key}", status=today)
-            return True
-        return False
+        return not session or session.get("status") != today
+
+    def mark_first_query_done(self, key: str) -> None:
+        """标记今日首次查询已完成"""
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+        self.set_chat_session(f"daily_first_{key}", status=today)
 
     def add_memory_candidate(
         self,
