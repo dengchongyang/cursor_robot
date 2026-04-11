@@ -15,3 +15,4 @@
 - `bug-triage.md`
 - `deploy-checklist.md`
 - `rtc-troubleshooting.md` (RTC 通话无声排障 SOP)
+- `context-switching.md` (上下文识别与任务切换技能)
