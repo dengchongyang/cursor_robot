@@ -259,16 +259,19 @@ def _do_process_message(
             if phone_match:
                 phone = phone_match.group()
                 # 检查是否需要验证码（每日首次或 Token 失效）
-                needs_code = memory_store.is_first_query_today("comein") or not comein_client._token
+                is_first_query = memory_store.is_first_query_today("comein")
+                needs_code = is_first_query or not comein_client._token
                 
                 if code_match:
                     code = code_match.group()
                     if comein_client.login(code):
-                        send_text_reply(chat_id, f"验证码 {code} 已收到。我正在调用 ComeIn 系统深度调取 {phone} 今日的参会质量数据，请稍候。")
+                        memory_store.mark_first_query_done("comein")
+                        send_text_reply(chat_id, f"验证码 {code} 已收到。我正在调用 ComeIn 系统深度调调取 {phone} 今日的参会质量数据，请稍候。")
                     else:
                         send_text_reply(chat_id, "验证码登录失败，请重新发送 6 位验证码。")
                         return
                 elif needs_code:
+                    logger.info(f"触发每日首次查询验证码询问 | phone={phone} | is_first={is_first_query}")
                     send_text_reply(chat_id, f"检测到你提到了手机号 {phone}，请把今天的 6 位验证码发给我，我才能继续查询外部系统。")
                     return
                 
