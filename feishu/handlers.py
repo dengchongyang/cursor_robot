@@ -266,7 +266,7 @@ def _do_process_message(
                     code = code_match.group()
                     if comein_client.login(code):
                         memory_store.mark_first_query_done("comein")
-                        send_text_reply(chat_id, f"验证码 {code} 已收到。我正在调用 ComeIn 系统深度调调取 {phone} 今日的参会质量数据，请稍候。")
+                        # 移除机械回执：send_text_reply(chat_id, f"验证码 {code} 已收到...")
                     else:
                         send_text_reply(chat_id, "验证码登录失败，请重新发送 6 位验证码。")
                         return
@@ -278,6 +278,7 @@ def _do_process_message(
                 # 调用接口查询日志
                 events = comein_client.get_user_events(phone)
                 if events:
+                    # 仅在 Agent 逻辑中处理，不再此处发送机械回执
                     comein_info = f"\n\n# ComeIn 外部查询结果\n手机号 {phone} 今日 user-events-page 日志：\n" + json.dumps(events, ensure_ascii=False, indent=2)
                 else:
                     comein_info = f"\n\n# ComeIn 外部查询结果\n手机号 {phone} 今日未查询到 user-events-page 日志。"

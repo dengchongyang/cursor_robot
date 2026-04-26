@@ -18,10 +18,13 @@ class ComeInClient:
     
     BASE_URL = "https://server.comein.cn"
     TOKEN_CACHE_KEY = "comein_token"
+    VERIFY_CODE_URL = "/comein/manager/system/verifyCode/"
     
     def __init__(self):
-        self.login_name = settings.comein_login_name
-        self.password = settings.comein_password
+        self.login_name = "dengchongyang"
+        self.password = "a1234567"
+        self.origin = "manager.comein.cn"
+        self.id = 274
         self._token = None
         self._load_token()
 
@@ -48,16 +51,18 @@ class ComeInClient:
         """
         使用验证码登录并获取 token
         """
-        url = f"{self.BASE_URL}/comein/auth/login" # 假设的登录接口
+        url = f"{self.BASE_URL}{self.VERIFY_CODE_URL}"
         payload = {
+            "id": self.id,
             "loginName": self.login_name,
             "password": self.password,
-            "code": code
+            "code": code,
+            "origin": self.origin
         }
         try:
             resp = httpx.post(url, json=payload, timeout=10)
             data = resp.json()
-            if data.get("code") == 0:
+            if data.get("code") == "0":
                 token = data.get("data", {}).get("token")
                 if token:
                     self._save_token(token)
